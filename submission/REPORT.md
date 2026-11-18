@@ -55,4 +55,3 @@ Cách giảm: nâng `iou_loose` (đánh đổi: nhiều cảnh báo giả hơn, 
 Chưa chạy. Phần train Colab là tùy chọn, chấm riêng; chưa làm vì ưu tiên hoàn thành phần lõi (5 bước) trước.
 
 ## 6. Quyết định và ghi chú AI
-
