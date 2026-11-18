@@ -40,5 +40,49 @@ from ..model_cache import get_preds  # noqa: F401
 
 
 def run(ds, cfg, preds=None):
-    # TODO
-    raise NotImplementedError("check second_opinion chưa làm")
+    c = cfg["second_opinion"]
+    if preds is None:
+        preds = get_preds(ds, cfg, "checker")
+    issues = []
+
+    def add(code, stem, msg, line=None, **extra):
+        issues.append(Issue("second_opinion", WARN, code, stem, msg, line, extra))
+
+    for img in ds.image_files():
+        stem = img.stem
+        if stem not in preds or ds.read_label_lines(stem) is None:
+            continue
+        size = ds.image_size(stem)
+        W, H = size if size else (1, 1)
+        L = ds.valid_boxes(stem)
+        P = [r for r in preds[stem] if r[1] >= c["conf"] and r[4] * W * r[5] * H >= c["min_area_px"]]
+
+        for r in P:
+            cls, conf, box = int(r[0]), r[1], tuple(r[2:6])
+            cands = [(iou_xywh(box, b[1:]), b[0]) for b in L]
+            cands = [(iou, lc) for iou, lc in cands if iou >= c["iou_missing"]]
+            if not cands:
+                add("POSSIBLE_MISSING", stem, f"model thấy vật lớp {cls} (conf {conf:.2f}) mà nhãn không có box", conf=conf)
+                continue
+            same = [iou for iou, lc in cands if lc == cls]
+            if same:
+                best = max(same)
+                if best < c["iou_loose"]:
+                    add("POSSIBLE_LOOSE_BOX", stem, f"box lỏng/lệch so với model (IoU {best:.2f})", iou=round(best, 3), conf=conf)
+                continue
+            best = max(iou for iou, _ in cands)
+            if best >= c["iou_match"]:
+                add("POSSIBLE_WRONG_CLASS", stem, f"model cho là lớp {cls} (conf {conf:.2f}), nhãn khác lớp (IoU {best:.2f})",
+                    iou=round(best, 3), conf=conf)
+
+        confident = [r for r in preds[stem] if r[1] >= c["fp_conf"]]
+        for no, text in ds.read_label_lines(stem):
+            try:
+                b = parse_yolo_line(text)
+            except ValueError:
+                continue
+            if not 0 <= b[0] < len(ds.classes):
+                continue
+            if all(iou_xywh(b[1:], r[2:6]) < c["iou_missing"] for r in confident):
+                add("POSSIBLE_FALSE_POS", stem, "box nhãn không khớp vật nào model thấy", no)
+    return issues

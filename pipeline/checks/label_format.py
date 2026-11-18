@@ -25,5 +25,41 @@ from ..common import ERROR, WARN, Issue, iou_xywh, parse_yolo_line  # noqa: F401
 
 
 def run(ds, cfg):
-    # TODO: duyệt từng file nhãn, từng dòng
-    raise NotImplementedError("check label_format chưa làm")
+    c = cfg["label_format"]
+    issues = []
+    for lp in ds.label_files():
+        stem = lp.stem
+        size = ds.image_size(stem)
+        seen = []                                   # box hợp lệ ở các dòng trước (để bắt DUP_BOX)
+        for no, text in ds.read_label_lines(stem) or []:
+            def add(sev, code, msg, **extra):
+                issues.append(Issue("label_format", sev, code, stem, msg, no, extra))
+
+            try:
+                cls, x, y, w, h = parse_yolo_line(text)
+            except ValueError as e:
+                add(ERROR, "BAD_FORMAT", f"dòng sai định dạng: {e}")
+                continue
+            if not 0 <= cls < len(ds.classes):
+                add(ERROR, "BAD_CLASS_ID", f"id lớp {cls} ngoài 0..{len(ds.classes) - 1}")
+                continue
+            if w <= 0 or h <= 0:
+                add(ERROR, "BOX_ZERO", f"box không có diện tích (w={w}, h={h})")
+                continue
+
+            over = max(0.0, -(x - w / 2), (x + w / 2) - 1, -(y - h / 2), (y + h / 2) - 1)
+            if over > c["overflow_tol"]:
+                add(ERROR, "BOX_OUT_OF_IMAGE", f"box tràn ra ngoài ảnh {over:.4f}", overflow=round(over, 4))
+
+            box = (x, y, w, h)
+            if any(pc == cls and iou_xywh(pb, box) > c["dup_box_iou"] for pc, pb in seen):
+                add(ERROR, "DUP_BOX", "box lặp lại một box cùng lớp ở dòng trước")
+            seen.append((cls, box))
+
+            if size:
+                short = min(w * size[0], h * size[1])
+                if short < c["min_box_px"]:
+                    add(WARN, "BOX_TINY", f"cạnh ngắn của box {short:.1f}px < {c['min_box_px']}px")
+            if w * h > c["max_box_frac"]:
+                add(WARN, "BOX_HUGE", f"box chiếm {w * h:.0%} ảnh")
+    return issues
