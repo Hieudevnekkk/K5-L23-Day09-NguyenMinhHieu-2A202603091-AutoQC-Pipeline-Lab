@@ -52,6 +52,25 @@ Hàng đợi duyệt trên raw (budget 0, phash_dist 8): conf 0.25 → 143 ảnh
 Cách giảm: nâng `iou_loose` (đánh đổi: nhiều cảnh báo giả hơn, hàng đợi người dài hơn), và thêm check bắt hai box khác lớp có IoU cao.
 
 ## 5. Train: raw vs clean (tùy chọn, chấm riêng)
-Chưa chạy. Phần train Colab là tùy chọn, chấm riêng; chưa làm vì ưu tiên hoàn thành phần lõi (5 bước) trước.
+Cấu hình: yolo26n, 20 epoch, `imgsz` 640, `batch` 16, seed 0 và 1, chạy trên Colab (GPU), cùng tập val/test cho cả hai biến thể. Số liệu từ `submission/results/comparison.md`:
+
+| biến thể | #ảnh train | số seed | mAP50 (TB ± độ lệch) | mAP50-95 | precision | recall |
+|---|---|---|---|---|---|---|
+| raw | 224 | 2 | 0.726 ± 0.000 | 0.512 ± 0.004 | 0.764 ± 0.061 | 0.649 ± 0.028 |
+| clean | 203 | 2 | 0.699 ± 0.025 | 0.486 ± 0.013 | 0.796 ± 0.050 | 0.596 ± 0.049 |
+
+Từng seed (mAP50): raw 0.7256 / 0.7259; clean 0.6813 / 0.7163.
+
+**So với nhiễu:** chênh mAP50 (clean − raw) = **−0.027**, nhỏ hơn hoặc xấp xỉ độ lệch giữa hai seed của `clean` (±0.025). Seed 1 của `clean` (0.716) chỉ thấp hơn `raw` 0.010. Với 2 seed và tập test nhỏ, **chưa kết luận được** rằng `clean` tốt hơn hay kém hơn `raw`; chỉ có thể nói `clean` không cải thiện mAP50 trong thí nghiệm này. Độ lệch của `raw` (0.000) chỉ là hai seed tình cờ gần nhau, không chứng tỏ `raw` ổn định hơn.
+
+**Giả thuyết giải thích và cách kiểm:**
+1. *`raw` được lợi vì rò rỉ test:* `raw` còn 5 ảnh `LEAK_TEST` (trùng với kho test/val) và 11 ảnh trùng; nếu test có chứa các ảnh này thì mAP của `raw` bị thổi phồng. Kiểm: đánh giá `raw` trên test sau khi loại các ảnh rò rỉ, hoặc huấn luyện `raw` đã bỏ 5 ảnh `LEAK_TEST` rồi so lại.
+2. *`clean` có ít dữ liệu hơn (203 so với 224 ảnh, −9%):* với lô nhỏ, bớt 21 ảnh làm giảm recall (0.649 → 0.596) dù precision tăng (0.764 → 0.796). Kiểm: huấn luyện `clean` và `raw` với cùng số ảnh (bốc ngẫu nhiên 203 ảnh từ `raw`).
+3. *Nhãn máy còn lại trong `clean`:* lô sau duyệt vẫn còn 38/203 ảnh có cảnh báo chưa người xem (Hold), và 45 ảnh cuối hàng đợi chưa duyệt, nên nhãn của `clean` chưa thật sự sạch. Kiểm: tăng ngân sách duyệt để Release rồi huấn luyện lại.
+4. *Test nhỏ và ít seed:* mAP trên tập test nhỏ dao động vài điểm phần trăm. Kiểm: chạy ≥ 5 seed và báo cáo khoảng tin cậy.
+
+**Kết luận.** Trong thí nghiệm này, `clean` (203 ảnh) không cho mAP50 tốt hơn `raw` (224 ảnh): trung bình 0,699 so với 0,726, chênh −0,027. Mức chênh này nằm trong độ nhiễu giữa các seed (`clean` lệch ±0,025; seed 1 của `clean` chỉ thấp hơn `raw` 0,010), nên **chưa đủ bằng chứng để nói `clean` tốt hơn hay kém hơn**. Kết quả không chứng minh pipeline làm tăng chất lượng mô hình, và cũng không chứng minh nó làm giảm.
+
+Có hai dấu hiệu đáng chú ý nhưng chưa kiểm chứng: `raw` còn 5 ảnh rò rỉ test nên mAP có thể bị thổi phồng; `clean` ít hơn 21 ảnh nên recall thấp hơn (0,596 so với 0,649). Giá trị chính của pipeline ở lô này nằm ở việc phát hiện và chặn lỗi (loại 21 ảnh hỏng/trùng/rò rỉ, tự sửa 35 thay đổi, chặn xuất bản khi còn lỗi bắt buộc), chứ không nằm ở mAP.
 
 ## 6. Quyết định và ghi chú AI
